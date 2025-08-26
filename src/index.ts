@@ -298,12 +298,20 @@ async function fetchTransactionDetails(signature: string): Promise<void> {
   try {
     console.log(`🔄 Fetching details for: ${signature}`);
     
-    const url = `https://api.helius.xyz/v0/transactions/?api-key=${HELIUS_API_KEY}`;
+    // Use the correct Helius RPC endpoint
+    const url = `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`;
     const requestBody = {
-      transactions: [signature]
+      jsonrpc: "2.0",
+      id: 1,
+      method: "getTransaction",
+      params: [
+        signature,
+        {
+          encoding: "jsonParsed",
+          maxSupportedTransactionVersion: 0
+        }
+      ]
     };
-    
-    console.log(`📡 Making API request to: ${url}`);
     
     const response = await fetch(url, {
       method: 'POST',
@@ -313,23 +321,18 @@ async function fetchTransactionDetails(signature: string): Promise<void> {
       body: JSON.stringify(requestBody)
     });
 
-    console.log(`📨 Response status: ${response.status} ${response.statusText}`);
-
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`);
+      throw new Error(`HTTP error! status: ${response.status}`);
     }
 
     const data = await response.json();
-    console.log(`📦 Received data for ${data?.length || 0} transactions`);
     
-    if (data && data.length > 0) {
-      const transaction = data[0];
+    if (data.result) {
       console.log(`✅ Processing transaction data...`);
       
-      // Convert to our expected format
+      const transaction = data.result;
       const formattedTx: HeliusTransaction = {
-        signature: transaction.signature,
+        signature: signature,
         slot: transaction.slot,
         blockTime: transaction.blockTime,
         meta: transaction.meta,
@@ -339,54 +342,9 @@ async function fetchTransactionDetails(signature: string): Promise<void> {
       analyzeTransaction(formattedTx);
     } else {
       console.log(`⚠️ No transaction data found for ${signature}`);
-      console.log(`Raw response:`, JSON.stringify(data, null, 2));
     }
   } catch (error) {
     console.error(`❌ Error fetching transaction ${signature}:`, error);
-    
-    // If fetch fails, let's try a different approach
-    console.log(`🔄 Trying alternative method...`);
-    await fetchTransactionDetailsAlternative(signature);
-  }
-}
-
-async function fetchTransactionDetailsAlternative(signature: string): Promise<void> {
-  try {
-    // Try using the enhanced transactions API
-    const url = `https://api.helius.xyz/v0/transactions/parsed?api-key=${HELIUS_API_KEY}`;
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        transactions: [signature]
-      })
-    });
-
-    if (response.ok) {
-      const data = await response.json();
-      if (data && data.length > 0) {
-        console.log(`✅ Alternative method worked! Processing...`);
-        const transaction = data[0];
-        
-        const formattedTx: HeliusTransaction = {
-          signature: transaction.signature,
-          slot: transaction.slot,
-          blockTime: transaction.blockTime,
-          meta: transaction.meta,
-          transaction: transaction.transaction
-        };
-        
-        analyzeTransaction(formattedTx);
-        return;
-      }
-    }
-    
-    console.log(`⚠️ Alternative method also failed. Transaction might be too recent.`);
-    
-  } catch (error) {
-    console.error(`❌ Alternative method failed:`, error);
   }
 }
 
