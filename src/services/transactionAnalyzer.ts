@@ -8,16 +8,20 @@ import {
 
 export class TransactionAnalyzer {
   static analyzeTransaction(tx: HeliusTransaction): void {
-    const timestamp = new Date(tx.blockTime * 1000).toISOString();
-    
+
+    // REVERTED: Your original, correct timestamp logic is restored.
+    const timestamp = tx.blockTime
+      ? new Date(tx.blockTime * 1000).toISOString()
+      : '[TIMESTAMP PENDING]';
+
     console.log('=====================================================');
     console.log(`[${timestamp}] METEORA POOL TRANSACTION DETECTED`);
     console.log(`Transaction ID: ${tx.signature}`);
     console.log(`Slot: ${tx.slot}`);
     console.log(`Solscan: https://solscan.io/tx/${tx.signature}`);
     
-    // Check if transaction failed
-    if (tx.meta.err) {
+    // This fix is still essential to prevent crashes when `meta` is missing.
+    if (tx.meta?.err) {
       console.log(`❌ Transaction failed: ${JSON.stringify(tx.meta.err)}`);
     } else {
       console.log(`✅ Transaction successful`);
@@ -32,7 +36,8 @@ export class TransactionAnalyzer {
   }
 
   private static analyzeRelevantLogs(tx: HeliusTransaction): void {
-    const relevantLogs = tx.meta.logMessages.filter(log => 
+    // ESSENTIAL FIX: Safely access logMessages and provide an empty array as a fallback.
+    const relevantLogs = (tx.meta?.logMessages ?? []).filter(log => 
       log.includes('swap') || 
       log.includes('Meteora') ||
       log.includes('DAMM') ||
@@ -51,12 +56,15 @@ export class TransactionAnalyzer {
   }
 
   private static analyzeSolBalanceChanges(tx: HeliusTransaction): void {
-    const accountKeys = tx.transaction.message.accountKeys;
+    // ESSENTIAL FIX: Safely access accountKeys and balance arrays.
+    const accountKeys = tx.transaction?.message?.accountKeys ?? [];
+    const preBalances = tx.meta?.preBalances ?? [];
+    const postBalances = tx.meta?.postBalances ?? [];
     const balanceChanges: BalanceChange[] = [];
     
     for (let i = 0; i < accountKeys.length; i++) {
-      const preBalance = tx.meta.preBalances[i] || 0;
-      const postBalance = tx.meta.postBalances[i] || 0;
+      const preBalance = preBalances[i] || 0;
+      const postBalance = postBalances[i] || 0;
       const change = postBalance - preBalance;
       
       if (change !== 0) {
@@ -81,24 +89,27 @@ export class TransactionAnalyzer {
   }
 
   private static analyzeTokenBalanceChanges(tx: HeliusTransaction): void {
-    if (tx.meta.preTokenBalances.length > 0 || tx.meta.postTokenBalances.length > 0) {
+    // ESSENTIAL FIX: Safely access token balance arrays.
+    const preTokenBalances = tx.meta?.preTokenBalances ?? [];
+    const postTokenBalances = tx.meta?.postTokenBalances ?? [];
+    const accountKeys = tx.transaction?.message?.accountKeys ?? [];
+
+    if (preTokenBalances.length > 0 || postTokenBalances.length > 0) {
       console.log('\n--- TOKEN BALANCE CHANGES ---');
       
-      // Create maps for easier comparison
       const preTokenMap = new Map();
       const postTokenMap = new Map();
       
-      tx.meta.preTokenBalances.forEach(balance => {
+      preTokenBalances.forEach(balance => {
         const key = `${balance.accountIndex}-${balance.mint}`;
         preTokenMap.set(key, balance);
       });
       
-      tx.meta.postTokenBalances.forEach(balance => {
+      postTokenBalances.forEach(balance => {
         const key = `${balance.accountIndex}-${balance.mint}`;
         postTokenMap.set(key, balance);
       });
       
-      // Find all unique account-mint combinations
       const allKeys = new Set([...preTokenMap.keys(), ...postTokenMap.keys()]);
       
       allKeys.forEach(key => {
@@ -109,12 +120,14 @@ export class TransactionAnalyzer {
         const postAmount = postBalance?.uiTokenAmount?.uiAmount || 0;
         const change = postAmount - preAmount;
         
-        if (Math.abs(change) > 0.000001) { // Ignore dust changes
+        if (Math.abs(change) > 0.000001) {
           const tokenBalance = postBalance || preBalance;
           const accountIndex = tokenBalance.accountIndex;
-          const account = tx.transaction.message.accountKeys[accountIndex];
+          const account = accountKeys[accountIndex];
           const mint = tokenBalance.mint;
           
+          if (!account || !mint) return;
+
           const changeStr = change > 0 ? `+${change.toFixed(6)}` : change.toFixed(6);
           console.log(`${account} (${mint}): ${changeStr} tokens`);
           
@@ -127,10 +140,12 @@ export class TransactionAnalyzer {
   }
 
   private static analyzeProgramsInvolved(tx: HeliusTransaction): void {
-    const accountKeys = tx.transaction.message.accountKeys;
+    // ESSENTIAL FIX: Safely access instructions and accountKeys.
+    const accountKeys = tx.transaction?.message?.accountKeys ?? [];
+    const instructions = tx.transaction?.message?.instructions ?? [];
     const programs = new Set<string>();
     
-    tx.transaction.message.instructions.forEach(ix => {
+    instructions.forEach(ix => {
       if (ix.programIdIndex !== undefined && accountKeys[ix.programIdIndex]) {
         programs.add(accountKeys[ix.programIdIndex]);
       }
