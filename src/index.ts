@@ -1,3 +1,4 @@
+// src/index.ts
 import WebSocket from 'ws';
 import dotenv from 'dotenv';
 
@@ -8,12 +9,23 @@ if (!HELIUS_API_KEY) {
   throw new Error('HELIUS_API_KEY is not set in .env file');
 }
 
+// Helius Enhanced WebSocket URL for transaction streams
 const WS_URL = `wss://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`;
 
-// Raydium AMM Program ID
-const RAYDIUM_PROGRAM_ID = '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8';
-// Your specific LP account address to monitor
-const LP_ACCOUNT_ADDRESS = '3ucNos4NbumPLZNWztqGHNFFgkHeRMBQAVemeeomsUxv';
+// Meteora DAMM Program IDs
+const METEORA_DAMM_V1_PROGRAM_ID = 'Eo7WjKq67rjJQSYxS6z3YkapzY3eMj6Xy8X5EQVn5UaB'; // DAMM V1
+const METEORA_DAMM_V2_PROGRAM_ID = 'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo'; // DAMM V2
+
+// Common Meteora program IDs that might be involved
+const METEORA_PROGRAMS = [
+  METEORA_DAMM_V1_PROGRAM_ID,
+  METEORA_DAMM_V2_PROGRAM_ID,
+  '24Uqj9JCLxUeoC3hGfh5W3s9FM9uCHDS2SG3LYwBpyTi', // Meteora DLMM
+  'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc',   // Whirlpool (also used by Meteora)
+];
+
+// Your specific LP/Pool account address to monitor (DBC pool or DAMM pool)
+const LP_ACCOUNT_ADDRESS = '8Pm2kZpnxD3hoMmt4bjStX2Pw2Z9abpbHzZxMPqxPmie';
 
 let ws: WebSocket | null = null;
 let retryCount = 0;
@@ -46,7 +58,7 @@ function analyzeTransaction(tx: HeliusTransaction): void {
   const timestamp = new Date(tx.blockTime * 1000).toISOString();
   
   console.log('=====================================================');
-  console.log(`[${timestamp}] LP TRANSACTION DETECTED`);
+  console.log(`[${timestamp}] METEORA POOL TRANSACTION DETECTED`);
   console.log(`Transaction ID: ${tx.signature}`);
   console.log(`Slot: ${tx.slot}`);
   console.log(`Solscan: https://solscan.io/tx/${tx.signature}`);
@@ -61,10 +73,12 @@ function analyzeTransaction(tx: HeliusTransaction): void {
   // Look for relevant logs
   const relevantLogs = tx.meta.logMessages.filter(log => 
     log.includes('swap') || 
-    log.includes('Raydium') ||
-    log.includes(RAYDIUM_PROGRAM_ID) ||
+    log.includes('Meteora') ||
+    log.includes('DAMM') ||
+    METEORA_PROGRAMS.some(programId => log.includes(programId)) ||
     log.includes(LP_ACCOUNT_ADDRESS) ||
-    log.toLowerCase().includes('liquidity')
+    log.toLowerCase().includes('liquidity') ||
+    log.toLowerCase().includes('pool')
   );
 
   if (relevantLogs.length > 0) {
@@ -160,8 +174,12 @@ function analyzeTransaction(tx: HeliusTransaction): void {
     console.log('\n--- PROGRAMS INVOKED ---');
     programs.forEach(program => {
       console.log(`- ${program}`);
-      if (program === RAYDIUM_PROGRAM_ID) {
-        console.log('  ^^^ RAYDIUM AMM PROGRAM ^^^');
+      if (program === METEORA_DAMM_V1_PROGRAM_ID) {
+        console.log('  ^^^ METEORA DAMM V1 PROGRAM ^^^');
+      } else if (program === METEORA_DAMM_V2_PROGRAM_ID) {
+        console.log('  ^^^ METEORA DAMM V2 PROGRAM ^^^');
+      } else if (METEORA_PROGRAMS.includes(program)) {
+        console.log('  ^^^ METEORA RELATED PROGRAM ^^^');
       }
     });
   }
@@ -196,7 +214,8 @@ function initializeWebSocket() {
 
     ws?.send(JSON.stringify(subscribeMessage));
     console.log(`🔍 Subscribed to logs mentioning LP: ${LP_ACCOUNT_ADDRESS}`);
-    console.log(`📊 Will analyze transactions involving: ${RAYDIUM_PROGRAM_ID}`);
+    console.log(`📊 Monitoring Meteora DAMM V1: ${METEORA_DAMM_V1_PROGRAM_ID}`);
+    console.log(`📊 Monitoring Meteora DAMM V2: ${METEORA_DAMM_V2_PROGRAM_ID}`);
     console.log(`⏰ Waiting for transactions...\n`);
   };
 
@@ -216,33 +235,27 @@ function initializeWebSocket() {
         const logData = message.params.result;
         const signature = logData.value?.signature;
         
-        // if (signature && logData.value?.logs) {
-        //   console.log(`📋 New logs for transaction: ${signature}`);
-          
-        //   // Check if logs contain Raydium/swap related content
-        //   const relevantLogs = logData.value.logs.filter((log: string) =>
-        //     log.includes('swap') || 
-        //     log.includes('Raydium') ||
-        //     log.includes(RAYDIUM_PROGRAM_ID) ||
-        //     log.includes(LP_ACCOUNT_ADDRESS)
-        //   );
-
-        //   if (relevantLogs.length > 0) {
-        //     console.log('🔍 Fetching full transaction details...');
-            
-        //     // Fetch full transaction details using Helius API
-        //     await fetchTransactionDetails(signature);
-        //   }
-        // }
-        if (signature) { // We only need to check if the signature exists
+        if (signature && logData.value?.logs) {
           console.log(`📋 New logs for transaction: ${signature}`);
-          console.log('✅ Helius confirmed relevance, fetching full details...');
           
-          // Directly fetch the details without the extra check
-          await fetchTransactionDetails(signature);
+          // Check if logs contain Meteora/DAMM/swap related content
+          const relevantLogs = logData.value.logs.filter((log: string) =>
+            log.includes('swap') || 
+            log.includes('Meteora') ||
+            log.includes('DAMM') ||
+            METEORA_PROGRAMS.some(programId => log.includes(programId)) ||
+            log.includes(LP_ACCOUNT_ADDRESS) ||
+            log.toLowerCase().includes('pool')
+          );
+
+          if (relevantLogs.length > 0) {
+            console.log('🔍 Fetching full transaction details...');
+            
+            // Fetch full transaction details using Helius API
+            await fetchTransactionDetails(signature);
+          }
         }
       }
-
 
       // Handle errors
       if (message.error) {
@@ -283,24 +296,36 @@ function initializeWebSocket() {
 
 async function fetchTransactionDetails(signature: string): Promise<void> {
   try {
-    const response = await fetch(`https://api.helius.xyz/v0/transactions/?api-key=${HELIUS_API_KEY}`, {
+    console.log(`🔄 Fetching details for: ${signature}`);
+    
+    const url = `https://api.helius.xyz/v0/transactions/?api-key=${HELIUS_API_KEY}`;
+    const requestBody = {
+      transactions: [signature]
+    };
+    
+    console.log(`📡 Making API request to: ${url}`);
+    
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        transactions: [signature]
-      })
+      body: JSON.stringify(requestBody)
     });
 
+    console.log(`📨 Response status: ${response.status} ${response.statusText}`);
+
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      const errorText = await response.text();
+      throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`);
     }
 
     const data = await response.json();
+    console.log(`📦 Received data for ${data?.length || 0} transactions`);
     
     if (data && data.length > 0) {
       const transaction = data[0];
+      console.log(`✅ Processing transaction data...`);
       
       // Convert to our expected format
       const formattedTx: HeliusTransaction = {
@@ -314,9 +339,54 @@ async function fetchTransactionDetails(signature: string): Promise<void> {
       analyzeTransaction(formattedTx);
     } else {
       console.log(`⚠️ No transaction data found for ${signature}`);
+      console.log(`Raw response:`, JSON.stringify(data, null, 2));
     }
   } catch (error) {
     console.error(`❌ Error fetching transaction ${signature}:`, error);
+    
+    // If fetch fails, let's try a different approach
+    console.log(`🔄 Trying alternative method...`);
+    await fetchTransactionDetailsAlternative(signature);
+  }
+}
+
+async function fetchTransactionDetailsAlternative(signature: string): Promise<void> {
+  try {
+    // Try using the enhanced transactions API
+    const url = `https://api.helius.xyz/v0/transactions/parsed?api-key=${HELIUS_API_KEY}`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        transactions: [signature]
+      })
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      if (data && data.length > 0) {
+        console.log(`✅ Alternative method worked! Processing...`);
+        const transaction = data[0];
+        
+        const formattedTx: HeliusTransaction = {
+          signature: transaction.signature,
+          slot: transaction.slot,
+          blockTime: transaction.blockTime,
+          meta: transaction.meta,
+          transaction: transaction.transaction
+        };
+        
+        analyzeTransaction(formattedTx);
+        return;
+      }
+    }
+    
+    console.log(`⚠️ Alternative method also failed. Transaction might be too recent.`);
+    
+  } catch (error) {
+    console.error(`❌ Alternative method failed:`, error);
   }
 }
 
@@ -367,7 +437,8 @@ process.on('SIGTERM', () => {
 });
 
 // Start the monitoring
-console.log('🚀 Starting LP Transaction Monitor');
-console.log(`📍 Target LP: ${LP_ACCOUNT_ADDRESS}`);
-console.log(`🔗 Raydium Program: ${RAYDIUM_PROGRAM_ID}`);
+console.log('🚀 Starting METEORA Pool Transaction Monitor');
+console.log(`📍 Target Pool: ${LP_ACCOUNT_ADDRESS}`);
+console.log(`🔗 DAMM V1 Program: ${METEORA_DAMM_V1_PROGRAM_ID}`);
+console.log(`🔗 DAMM V2 Program: ${METEORA_DAMM_V2_PROGRAM_ID}`);
 initializeWebSocket();
